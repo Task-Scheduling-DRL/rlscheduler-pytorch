@@ -44,7 +44,8 @@ pip install -r requirements.txt
 ```
 data/: Contains a series of workload and real-world traces.
 plot.py: Plot the trained results.
-rlschedule-torch.py: The main rlscheduler file.
+rlschedule.py: The main rlscheduler file.
+schedgym.py: the SchedGym environment.
 ```
 
 To change the hyper-parameters, such as `MAX_OBSV_SIZE` or the trajectory length during training, you can change them in rlschedule-torch.py.
