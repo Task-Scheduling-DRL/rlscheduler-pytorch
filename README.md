@@ -52,13 +52,14 @@ To change the hyper-parameters, such as `MAX_OBSV_SIZE` or the trajectory length
 ### Training
 To train a RL model based on a job trace, run this command:
 ```bash
-python rlschedule-torch.py --workload "./data/lublin_256.swf" --exp_name your-exp-name --trajs 500 --seed 0 --cpu 4
+python rlschedule.py --workload "./data/lublin_256.swf" --exp_name lublin_256 --trajs 100 --seed 0 --cpu 4
 ```
 
 There are many other parameters in the source file.
 * `--model`, specify a saved trained model (for two-step training and re-training)
-* `--pre_trained`, specify whether this trainig will be a twp-step training or re-training
+* `--pre_trained`, specify whether this training will be a twp-step training or re-training
 * `--score_type`, specify which scheduling metrics you are optimizing for: [0]：bounded job slowdown；[1]: job waiting time; [2]: job response time; [3] system resource utilization.
+* `--cpu`, specify how many CPU cores you want to use to do the parallel training.
 
 ### Monitor Training 
 
