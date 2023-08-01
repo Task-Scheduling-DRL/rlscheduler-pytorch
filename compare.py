@@ -2,9 +2,10 @@ import time
 import joblib
 import os
 import os.path as osp
-import tensorflow as tf
-from spinup import EpochLogger
-from spinup.utils.logx import restore_tf_graph
+#import tensorflow as tf
+#from spinup import EpochLogger
+#from spinup.utils.logx import restore_tf_graph
+import torch
 
 import gym
 from gym import spaces
@@ -16,33 +17,52 @@ import math
 import numpy as np
 import sys
 
-from HPCSimPickJobs import *
+#from HPCSimPickJobs import *
+from bfTorch import *
 
 import matplotlib.pyplot as plt
 plt.rcdefaults()
-tf.enable_eager_execution()
+#tf.enable_eager_execution()
 
-def load_policy(model_path, itr='last'):
-    # handle which epoch to load from
-    if itr=='last':
-        saves = [int(x[11:]) for x in os.listdir(model_path) if 'simple_save' in x and len(x)>11]
-        itr = '%d'%max(saves) if len(saves) > 0 else ''
-    else:
-        itr = '%d'%itr
+# def load_policy(model_path, itr='last'):
+#     # handle which epoch to load from
+#     if itr=='last':
+#         saves = [int(x[11:]) for x in os.listdir(model_path) if 'simple_save' in x and len(x)>11]
+#         itr = '%d'%max(saves) if len(saves) > 0 else ''
+#     else:
+#         itr = '%d'%itr
 
-    # load the things!
-    sess = tf.Session()
-    model = restore_tf_graph(sess, osp.join(model_path, 'simple_save'+itr))
+#     # load the things!
+#     sess = tf.Session()
+#     model = restore_tf_graph(sess, osp.join(model_path, 'simple_save'+itr))
 
-    # get the correct op for executing actions
-    pi = model['pi']
-    v = model['v']
-    out = model['out']
-    get_out = lambda x ,y  : sess.run(out, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES), model['mask']:y.reshape(-1, MAX_QUEUE_SIZE)})
+#     # get the correct op for executing actions
+#     pi = model['pi']
+#     v = model['v']
+#     out = model['out']
+#     get_out = lambda x ,y  : sess.run(out, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES), model['mask']:y.reshape(-1, MAX_QUEUE_SIZE)})
+#     # make function for producing an action given a single state
+#     get_probs = lambda x ,y  : sess.run(pi, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES), model['mask']:y.reshape(-1, MAX_QUEUE_SIZE)})
+#     get_v = lambda x : sess.run(v, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES)})
+#     return get_probs, get_out
+
+def load_pytorch_policy(fpath, itr, deterministic=False):
+    """ Load a pytorch policy saved with Spinning Up Logger."""
+    
+    fname = osp.join(fpath, 'pyt_save', 'model'+itr+'.pt')
+    print('\n\nLoading from %s.\n\n'%fname)
+
+    model = torch.load(fname)
+
     # make function for producing an action given a single state
-    get_probs = lambda x ,y  : sess.run(pi, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES), model['mask']:y.reshape(-1, MAX_QUEUE_SIZE)})
-    get_v = lambda x : sess.run(v, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES)})
-    return get_probs, get_out
+    def get_action(x, y):
+        with torch.no_grad():
+            x = torch.as_tensor(x, dtype=torch.float32)
+            y = torch.as_tensor(y, dtype=torch.float32)
+            action = model.act(x, y)
+        return action
+
+    return get_action
 
 def action_from_obs(o):
     lst = []
@@ -58,7 +78,11 @@ def action_from_obs(o):
     return result[0]
 
 #@profile
-def run_policy(env, get_probs, get_out, nums, iters, score_type):
+def run_policy(env, get_action, nums, iters, score_type):
+    assert env is not None, \
+        "Environment not found!\n\n It looks like the environment wasn't saved, " + \
+        "and we can't run the agent in it. :( \n\n Check out the readthedocs " + \
+        "page on Experiment Outputs for how to handle this situation."
     rl_r = []
     f1_r = [] 
     f2_r = []
@@ -103,26 +127,18 @@ def run_policy(env, get_probs, get_out, nums, iters, score_type):
                         skip_.append(math.floor(i/JOB_FEATURES))
                     lst.append(1)
 
-            out = get_out(o,np.array(lst))
-            softmax_out = tf.nn.softmax(out)
-            confidence = tf.reduce_max(softmax_out)
+            pi = get_action(o, np.array(lst))
+            # time_total += time.time() - start_time
+            # num_total += 1
+            # print(start_time, time_total, num_total)
+            a = pi[0]
             total_decisions += 1.0
-            if confidence > 0:
-                # start_time = time.time()
-                pi = get_probs(o, np.array(lst))
-                # time_total += time.time() - start_time
-                # num_total += 1
-                # print(start_time, time_total, num_total)
-                a = pi[0]
-                rl_decisions += 1.0
-            else:
-                # print('SJF')
-                a = action_from_obs(o)
-            # print(out)
-            # v_t = get_value(o)
-
-
-
+            rl_decisions += 1.0
+            # else:
+            #     # print('SJF')
+            #     a = action_from_obs(o)
+            # # print(out)
+            # # v_t = get_value(o)
             if a in skip_:
                 print("SKIP" + "(" + str(count) + ")", end="|")
             else:
@@ -131,7 +147,7 @@ def run_policy(env, get_probs, get_out, nums, iters, score_type):
             rl += r
             if d:
                 # print("RL decision ratio:",rl_decisions/total_decisions)
-                print("Sequence Length:",total_decisions)
+                print("Sequence Length:",rl_decisions)
                 break
         rl_r.append(rl)
         print ("")
@@ -193,7 +209,6 @@ def run_policy(env, get_probs, get_out, nums, iters, score_type):
     # plt.tick_params(axis='both', which='minor', labelsize=40)
     plt.tick_params(axis='both', which='major', labelsize=20)
     plt.tick_params(axis='both', which='minor', labelsize=20)
-
     plt.show()
 
 if __name__ == '__main__':
@@ -201,13 +216,13 @@ if __name__ == '__main__':
     import time
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rlmodel', type=str, default="./data/logs/ppo/ppo_s0")
+    parser.add_argument('--rlmodel', type=str, default="./logs/ppo/ppo_s0")
     parser.add_argument('--workload', type=str, default='./data/lublin_256.swf')
     parser.add_argument('--len', '-l', type=int, default=1024)
     parser.add_argument('--seed', '-s', type=int, default=1)
     parser.add_argument('--iter', '-i', type=int, default=10)
     parser.add_argument('--shuffle', type=int, default=0)
-    parser.add_argument('--backfil', type=int, default=0)
+    parser.add_argument('--backfil', type=int, default=1)
     parser.add_argument('--skip', type=int, default=0)
     parser.add_argument('--score_type', type=int, default=0)
     parser.add_argument('--batch_job_slice', type=int, default=0)
@@ -218,7 +233,7 @@ if __name__ == '__main__':
     workload_file = os.path.join(current_dir, args.workload)
     model_file = os.path.join(current_dir, args.rlmodel)
 
-    get_probs, get_value = load_policy(model_file, 'last') 
+    get_action = load_pytorch_policy(model_file, "") 
     
     # initialize the environment from scratch
     env = HPCEnv(shuffle=args.shuffle, backfil=args.backfil, skip=args.skip, job_score_type=args.score_type,
@@ -227,5 +242,5 @@ if __name__ == '__main__':
     env.seed(args.seed)
 
     start = time.time()
-    run_policy(env, get_probs, get_value, args.len, args.iter, args.score_type)
+    run_policy(env, get_action, args.len, args.iter, args.score_type)
     print("elapse: {}".format(time.time()-start))
