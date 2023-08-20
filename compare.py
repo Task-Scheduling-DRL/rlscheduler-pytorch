@@ -1,10 +1,13 @@
+# python compare.py --rlmodel "./logs/pik1/pik1_s0/" --workload "./data/PIK-IPLEX-2009-1.swf" --len 1024 --iter 10
+
 import time
 import joblib
 import os
 import os.path as osp
-#import tensorflow as tf
-#from spinup import EpochLogger
-#from spinup.utils.logx import restore_tf_graph
+
+# import tensorflow as tf
+# from spinup import EpochLogger
+# from spinup.utils.logx import restore_tf_graph
 import torch
 
 import gym
@@ -17,12 +20,16 @@ import math
 import numpy as np
 import sys
 
-#from HPCSimPickJobs import *
-from bfTorch import *
+# from HPCSimPickJobs import *
+# from bfTorch import *
+from schedgym import *
+from util_pytorch import *
+from rlschedule_ppo import *
 
 import matplotlib.pyplot as plt
+
 plt.rcdefaults()
-#tf.enable_eager_execution()
+# tf.enable_eager_execution()
 
 # def load_policy(model_path, itr='last'):
 #     # handle which epoch to load from
@@ -46,13 +53,17 @@ plt.rcdefaults()
 #     get_v = lambda x : sess.run(v, feed_dict={model['x']: x.reshape(-1, MAX_QUEUE_SIZE * JOB_FEATURES)})
 #     return get_probs, get_out
 
-def load_pytorch_policy(fpath, itr, deterministic=False):
-    """ Load a pytorch policy saved with Spinning Up Logger."""
-    
-    fname = osp.join(fpath, 'pyt_save', 'model'+itr+'.pt')
-    print('\n\nLoading from %s.\n\n'%fname)
 
-    model = torch.load(fname)
+def load_pytorch_policy(fpath, itr, deterministic=False):
+    """Load a pytorch policy saved with Spinning Up Logger."""
+
+    fname = osp.join(fpath, "pyt_save", "model" + itr + ".pt")
+    # fname = osp.join(fpath, 'pyt_save', 'model.pt')
+    print("\n\nLoading from %s.\n\n" % fname)
+
+    model = torch.load(fname) # 여기서 에러가 남
+    print('done')
+
 
     # make function for producing an action given a single state
     def get_action(x, y):
@@ -60,9 +71,11 @@ def load_pytorch_policy(fpath, itr, deterministic=False):
             x = torch.as_tensor(x, dtype=torch.float32)
             y = torch.as_tensor(y, dtype=torch.float32)
             action = model.act(x, y)
+            # action = model.act((x, y))
         return action
 
     return get_action
+
 
 def action_from_obs(o):
     lst = []
@@ -72,22 +85,24 @@ def action_from_obs(o):
         elif o[i] == 1 and o[i + 1] == 1 and o[i + 2] == 1 and o[i + 3] == 1:
             pass
         else:
-            lst.append((o[i+1],math.floor(i/JOB_FEATURES)))
+            lst.append((o[i + 1], math.floor(i / JOB_FEATURES)))
     min_time = min([i[0] for i in lst])
-    result = [i[1] for i in lst if i[0]==min_time]
+    result = [i[1] for i in lst if i[0] == min_time]
     return result[0]
 
-#@profile
+
+# @profile
 def run_policy(env, get_action, nums, iters, score_type):
-    assert env is not None, \
-        "Environment not found!\n\n It looks like the environment wasn't saved, " + \
-        "and we can't run the agent in it. :( \n\n Check out the readthedocs " + \
-        "page on Experiment Outputs for how to handle this situation."
+    assert env is not None, (
+        "Environment not found!\n\n It looks like the environment wasn't saved, "
+        + "and we can't run the agent in it. :( \n\n Check out the readthedocs "
+        + "page on Experiment Outputs for how to handle this situation."
+    )
     rl_r = []
-    f1_r = [] 
+    f1_r = []
     f2_r = []
     sjf_r = []
-    #small_r = []
+    # small_r = []
     wfp_r = []
     uni_r = []
 
@@ -96,19 +111,19 @@ def run_policy(env, get_action, nums, iters, score_type):
     # time_total = 0
     # num_total = 0
     for iter_num in range(0, iters):
-        start = iter_num *args.len
-        env.reset_for_test(nums,start)
+        start = iter_num * args.len
+        env.reset_for_test(nums, start)
         f1_r.append(sum(env.schedule_curr_sequence_reset(env.f1_score).values()))
         # f2_r.append(sum(env.schedule_curr_sequence_reset(env.f2_score).values()))
         uni_r.append(sum(env.schedule_curr_sequence_reset(env.uni_score).values()))
         wfp_r.append(sum(env.schedule_curr_sequence_reset(env.wfp_score).values()))
-        
+
         sjf_r.append(sum(env.schedule_curr_sequence_reset(env.sjf_score).values()))
-        #small_r.append(sum(env.schedule_curr_sequence_reset(env.smallest_score).values()))
+        # small_r.append(sum(env.schedule_curr_sequence_reset(env.smallest_score).values()))
         fcfs_r.append(sum(env.schedule_curr_sequence_reset(env.fcfs_score).values()))
 
         o = env.build_observation()
-        print ("schedule: ", end="")
+        print("schedule: ", end="")
         rl = 0
         total_decisions = 0
         rl_decisions = 0
@@ -117,14 +132,14 @@ def run_policy(env, get_action, nums, iters, score_type):
             skip_ = []
             lst = []
             for i in range(0, MAX_QUEUE_SIZE * JOB_FEATURES, JOB_FEATURES):
-                if all(o[i:i + JOB_FEATURES] == [0] + [1] * (JOB_FEATURES - 2) + [0]):
+                if all(o[i : i + JOB_FEATURES] == [0] + [1] * (JOB_FEATURES - 2) + [0]):
                     lst.append(0)
-                elif all(o[i:i + JOB_FEATURES] == [1] * JOB_FEATURES):
+                elif all(o[i : i + JOB_FEATURES] == [1] * JOB_FEATURES):
                     lst.append(0)
                 else:
                     count += 1
-                    if all(o[i:i + JOB_FEATURES] == [1] * (JOB_FEATURES-1) + [0]):
-                        skip_.append(math.floor(i/JOB_FEATURES))
+                    if all(o[i : i + JOB_FEATURES] == [1] * (JOB_FEATURES - 1) + [0]):
+                        skip_.append(math.floor(i / JOB_FEATURES))
                     lst.append(1)
 
             pi = get_action(o, np.array(lst))
@@ -142,15 +157,15 @@ def run_policy(env, get_action, nums, iters, score_type):
             if a in skip_:
                 print("SKIP" + "(" + str(count) + ")", end="|")
             else:
-                print (str(a)+"("+str(count)+")", end="|")
+                print(str(a) + "(" + str(count) + ")", end="|")
             o, r, d, _ = env.step_for_test(a)
             rl += r
             if d:
                 # print("RL decision ratio:",rl_decisions/total_decisions)
-                print("Sequence Length:",rl_decisions)
+                print("Sequence Length:", rl_decisions)
                 break
         rl_r.append(rl)
-        print ("")
+        print("")
 
     # plot
     all_data = []
@@ -160,8 +175,7 @@ def run_policy(env, get_action, nums, iters, score_type):
     all_data.append(sjf_r)
     all_data.append(f1_r)
     all_data.append(rl_r)
-    #all_data.append(fcfs_r)
-    
+    # all_data.append(fcfs_r)
 
     all_medians = []
     for p in all_data:
@@ -175,23 +189,31 @@ def run_policy(env, get_action, nums, iters, score_type):
     axes = plt.axes()
 
     xticks = [y + 1 for y in range(len(all_data))]
-    plt.plot(xticks[0:1], all_data[0:1], 'o', color='darkorange')
-    plt.plot(xticks[1:2], all_data[1:2], 'o', color='darkorange')
-    plt.plot(xticks[2:3], all_data[2:3], 'o', color='darkorange')
-    plt.plot(xticks[3:4], all_data[3:4], 'o', color='darkorange')
-    plt.plot(xticks[4:5], all_data[4:5], 'o', color='darkorange')
-    plt.plot(xticks[5:6], all_data[5:6], 'o', color='darkorange')
-    #plt.plot(xticks[6:7], all_data[6:7], 'o', color='darkorange')
+    plt.plot(xticks[0:1], all_data[0:1], "o", color="darkorange")
+    plt.plot(xticks[1:2], all_data[1:2], "o", color="darkorange")
+    plt.plot(xticks[2:3], all_data[2:3], "o", color="darkorange")
+    plt.plot(xticks[3:4], all_data[3:4], "o", color="darkorange")
+    # plt.plot(xticks[4:5], all_data[4:5], "o", color="darkorange")
+    # plt.plot(xticks[5:6], all_data[5:6], "o", color="darkorange")
+    # plt.plot(xticks[6:7], all_data[6:7], 'o', color='darkorange')
 
-    plt.boxplot(all_data, showfliers=False, meanline=True, showmeans=True, medianprops={"linewidth":0},meanprops={"color":"darkorange", "linewidth":4,"linestyle":"solid"})
-
+    plt.boxplot(
+        all_data,
+        showfliers=False,
+        meanline=True,
+        showmeans=True,
+        medianprops={"linewidth": 0},
+        meanprops={"color": "darkorange", "linewidth": 4, "linestyle": "solid"},
+    )
 
     axes.yaxis.grid(True)
     axes.set_xticks([y + 1 for y in range(len(all_data))])
-    xticklabels = ['FCFS', 'WFP', 'UNI', 'SJF', 'F1', 'RL']
+    xticklabels = ["FCFS", "WFP", "UNI", "SJF", "F1", "RL"]
+    # xticklabels = ["FCFS", "SJF", "F1", "RL"]
     # xticklabels = ['FCFS', 'WFP', 'UNI', 'SJF', 'RL']
-    plt.setp(axes, xticks=[y + 1 for y in range(len(all_data))],
-             xticklabels=xticklabels)
+    plt.setp(
+        axes, xticks=[y + 1 for y in range(len(all_data))], xticklabels=xticklabels
+    )
     if score_type == 0:
         plt.ylabel("Average bounded slowdown")
     elif score_type == 1:
@@ -207,40 +229,49 @@ def run_policy(env, get_action, nums, iters, score_type):
     plt.xlabel("Scheduling Policies")
     # plt.tick_params(axis='both', which='major', labelsize=40)
     # plt.tick_params(axis='both', which='minor', labelsize=40)
-    plt.tick_params(axis='both', which='major', labelsize=20)
-    plt.tick_params(axis='both', which='minor', labelsize=20)
+    plt.tick_params(axis="both", which="major", labelsize=20)
+    plt.tick_params(axis="both", which="minor", labelsize=20)
     plt.show()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     import argparse
     import time
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--rlmodel', type=str, default="./logs/ppo/ppo_s0")
-    parser.add_argument('--workload', type=str, default='./data/lublin_256.swf')
-    parser.add_argument('--len', '-l', type=int, default=1024)
-    parser.add_argument('--seed', '-s', type=int, default=1)
-    parser.add_argument('--iter', '-i', type=int, default=10)
-    parser.add_argument('--shuffle', type=int, default=0)
-    parser.add_argument('--backfil', type=int, default=1)
-    parser.add_argument('--skip', type=int, default=0)
-    parser.add_argument('--score_type', type=int, default=0)
-    parser.add_argument('--batch_job_slice', type=int, default=0)
+    parser.add_argument("--rlmodel", type=str, default="./logs/ppo/ppo_s0")
+    parser.add_argument("--workload", type=str, default="./data/lublin_256.swf")
+    parser.add_argument("--len", "-l", type=int, default=1024)
+    parser.add_argument("--seed", "-s", type=int, default=1)
+    parser.add_argument("--iter", "-i", type=int, default=10)
+    parser.add_argument("--shuffle", type=int, default=0)
+    parser.add_argument("--backfil", type=int, default=1)
+    parser.add_argument("--skip", type=int, default=0)
+    parser.add_argument("--score_type", type=int, default=0)
+    parser.add_argument("--batch_job_slice", type=int, default=0)
 
     args = parser.parse_args()
 
     current_dir = os.getcwd()
     workload_file = os.path.join(current_dir, args.workload)
     model_file = os.path.join(current_dir, args.rlmodel)
+    print(model_file)
 
-    get_action = load_pytorch_policy(model_file, "") 
-    
+    get_action = load_pytorch_policy(model_file, "")
+    # get_action = load_pytorch_policy(model_file)
+
     # initialize the environment from scratch
-    env = HPCEnv(shuffle=args.shuffle, backfil=args.backfil, skip=args.skip, job_score_type=args.score_type,
-                 batch_job_slice=args.batch_job_slice, build_sjf=False)
+    env = SchedGym(
+        shuffle=args.shuffle,
+        backfil=args.backfil,
+        skip=args.skip,
+        job_score_type=args.score_type,
+        batch_job_slice=args.batch_job_slice,
+        build_sjf=False,
+    )
     env.my_init(workload_file=workload_file)
     env.seed(args.seed)
 
     start = time.time()
     run_policy(env, get_action, args.len, args.iter, args.score_type)
-    print("elapse: {}".format(time.time()-start))
+    print("elapse: {}".format(time.time() - start))

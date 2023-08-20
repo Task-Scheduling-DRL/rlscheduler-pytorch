@@ -1,3 +1,4 @@
+# setuptools==65.5.0 # pip3 install setuptools==65.5.0 먼저 해줘야 한다.
 numpy>=1.24.0
 joblib==1.2.0
 scipy==1.10.0

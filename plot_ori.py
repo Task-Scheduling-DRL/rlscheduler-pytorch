@@ -1,5 +1,3 @@
-# python plot.py ./logs/pik1/ -x Epoch -s 1
-
 import seaborn as sns
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -52,7 +50,15 @@ def plot_data(
     # blue = (0.2980392156862745, 0.4470588235294118, 0.6901960784313725)
     # red = (0.7686274509803922, 0.3058823529411765, 0.3215686274509804)
     # sns.set_palette([blue, red])
-    # sns.tsplot(data=data, time=xaxis, value=value, unit="Unit", condition=condition, ci='sd', **kwargs)
+    # sns.tsplot(
+    #     data=data,
+    #     time=xaxis,
+    #     value=value,
+    #     unit="Unit",
+    #     condition=condition,
+    #     ci="sd",
+    #     **kwargs
+    # )
     sns.lineplot(data=data, x=xaxis, y=value, hue=condition, errorbar="sd", **kwargs)
     """
     If you upgrade to any version of Seaborn greater than 0.8.1, switch from 
@@ -228,7 +234,7 @@ def make_plots(
             estimator=estimator,
         )
     plt.show()
-    # plt.figure().savefig("rl_monitor.png")  # 추가
+    plt.figure().savefig("rl_monitor.png")
 
 
 def main():
@@ -311,4 +317,3 @@ traj_per_epoch
 
 if __name__ == "__main__":
     main()
-    print("done")  # 추가
