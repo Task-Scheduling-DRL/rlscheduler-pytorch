@@ -1,5 +1,4 @@
 # python rlschedule_ppo.py --workload "./data/PIK-IPLEX-2009-1.swf" --exp_name pik1-ppo-t1024e100 --trajs 500 --seed 0 --epochs 100
-# python rlschedule_ppo.py --workload "./data/lublin_256.swf" --exp_name lublin1-ppo-t1024e100 --trajs 500 --seed 0 --epochs 100
 
 import json
 import joblib
@@ -28,6 +27,10 @@ from schedgym import *
 from util_pytorch import *
 
 
+# gpu 사용 여부 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 class PPOBuffer:
     """
     A buffer for storing trajectories experienced by a PPO agent interacting
@@ -35,7 +38,7 @@ class PPOBuffer:
     for calculating the advantages of state-action pairs.
     """
 
-    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
+    def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95): # lam = lambda
         size = size * 100  # assume the traj can be really long
         self.obs_buf = np.zeros(combined_shape(size, obs_dim), dtype=np.float32)
         # self.cobs_buf = np.zeros(combined_shape(size, JOB_SEQUENCE_SIZE*3), dtype=np.float32)
@@ -128,7 +131,7 @@ class PPOBuffer:
             logp=self.logp_buf[:actual_size],
         )
 
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k, v in data.items()}
+        return {k: torch.as_tensor(v, dtype=torch.float32, device=device) for k, v in data.items()}
 
         # return [self.obs_buf[:actual_size], self.act_buf[:actual_size], self.mask_buf[:actual_size], actual_adv_buf, self.ret_buf[:actual_size], self.logp_buf[:actual_size]]
 
@@ -157,6 +160,7 @@ class RLActor(nn.Module):
         self.dense4 = nn.Linear(8, 1)
 
     def _distribution(self, obs, mask):
+        mask = torch.tensor(mask, device=device) # 추가
         x = obs.view(-1, MAX_QUEUE_SIZE, JOB_FEATURES)
         x = torch.relu(self.dense1(x))
         x = torch.relu(self.dense2(x))
@@ -187,7 +191,7 @@ class RLActor(nn.Module):
             logp_a = self._log_prob_from_distribution(pi, act)
         return pi, logp_a
 
-
+ 
 class RLCritic(nn.Module):
     def __init__(self, obs_dim, hidden_sizes, activation):
         super().__init__()
@@ -217,7 +221,7 @@ class RLActorCritic(nn.Module):
             a = pi.sample()
             logp_a = self.pi._log_prob_from_distribution(pi, a)
             v = self.v(obs, mask)
-        return a.numpy(), v.numpy(), logp_a.numpy()
+        return a.cpu().numpy(), v.cpu().numpy(), logp_a.cpu().numpy() # cpu 추가
 
     # def act(self, obs):
     #     return self.step(obs)[0] 
@@ -287,7 +291,7 @@ def ppo(
     act_dim = env.action_space.shape
 
     # Create actor-critic module
-    ac = RLActorCritic(env.observation_space, env.action_space, **ac_kwargs)
+    ac = RLActorCritic(env.observation_space, env.action_space, **ac_kwargs).to(device) # gpu 추가
 
     # Sync params across processes
     sync_params(ac)
@@ -318,24 +322,24 @@ def ppo(
         )
 
         # Policy loss
-        pi, logp = ac.pi(obs, mask, act)
-        ratio = torch.exp(logp - logp_old)
-        clip_adv = torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+        pi, logp = ac.pi(obs, mask, act) 
+        ratio = torch.exp(logp - logp_old).to(device)
+        clip_adv = (torch.clamp(ratio, 1 - clip_ratio, 1 + clip_ratio) * adv).to(device)
+        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean() 
 
         # Useful extra info
-        approx_kl = (logp_old - logp).mean().item()
-        ent = pi.entropy().mean().item()
-        clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio)
-        clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
+        approx_kl = (logp_old - logp).mean().item() 
+        ent = pi.entropy().mean().item() 
+        clipped = ratio.gt(1 + clip_ratio) | ratio.lt(1 - clip_ratio) 
+        clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item() 
+        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac) 
 
         return loss_pi, pi_info
 
     # Set up function for computing value loss
     def compute_loss_v(data):
         obs, ret, mask = data["obs"], data["ret"], data["mask"]
-        return ((ac.v(obs, mask) - ret) ** 2).mean()
+        return ((ac.v(obs, mask) - ret) ** 2).mean().to(device)
 
     # Set up optimizers for policy and value function
     pi_optimizer = Adam(ac.pi.parameters(), lr=pi_lr)
@@ -412,8 +416,8 @@ def ppo(
                     lst.append(1)
 
             a, v_t, logp_t = ac.step(
-                torch.as_tensor(o, dtype=torch.float32), np.array(lst).reshape(1, -1)
-            )
+                torch.as_tensor(o, dtype=torch.float32, device=device), np.array(lst).reshape(1, -1)
+            ) # gpu 추가
             # a, v_t, logp_t = ac.step(torch.as_tensor(o, dtype=torch.float32), np.array(lst).reshape(1,-1))
 
             num_total += 1
